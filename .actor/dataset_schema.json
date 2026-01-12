@@ -1,0 +1,145 @@
+{
+  "actorSpecification": 1,
+  "fields": {},
+  "views": {
+    "overview": {
+      "title": "Overview",
+      "transformation": {
+        "fields": [
+          "name",
+          "start_date",
+          "start_time",
+          "location",
+          "price",
+          "category",
+          "url"
+        ]
+      },
+      "display": {
+        "component": "table",
+        "properties": {
+          "name": {
+            "label": "Event Name",
+            "format": "text"
+          },
+          "start_date": {
+            "label": "Date",
+            "format": "text"
+          },
+          "start_time": {
+            "label": "Time",
+            "format": "text"
+          },
+          "location": {
+            "label": "Location",
+            "format": "text"
+          },
+          "price": {
+            "label": "Price",
+            "format": "text"
+          },
+          "category": {
+            "label": "Category",
+            "format": "text"
+          },
+          "url": {
+            "label": "Event URL",
+            "format": "link"
+          }
+        }
+      }
+    },
+    "details": {
+      "title": "Full Details",
+      "transformation": {
+        "fields": [
+          "id",
+          "name",
+          "summary",
+          "start_date",
+          "start_time",
+          "end_date",
+          "end_time",
+          "timezone",
+          "is_online_event",
+          "is_free",
+          "price",
+          "category",
+          "organizer_id",
+          "image_url",
+          "url",
+          "tickets_url"
+        ]
+      },
+      "display": {
+        "component": "table",
+        "properties": {
+          "id": {
+            "label": "Event ID",
+            "format": "text"
+          },
+          "name": {
+            "label": "Event Name",
+            "format": "text"
+          },
+          "summary": {
+            "label": "Description",
+            "format": "text"
+          },
+          "start_date": {
+            "label": "Start Date",
+            "format": "text"
+          },
+          "start_time": {
+            "label": "Start Time",
+            "format": "text"
+          },
+          "end_date": {
+            "label": "End Date",
+            "format": "text"
+          },
+          "end_time": {
+            "label": "End Time",
+            "format": "text"
+          },
+          "timezone": {
+            "label": "Timezone",
+            "format": "text"
+          },
+          "is_online_event": {
+            "label": "Online Event",
+            "format": "boolean"
+          },
+          "is_free": {
+            "label": "Free Event",
+            "format": "boolean"
+          },
+          "price": {
+            "label": "Price",
+            "format": "text"
+          },
+          "category": {
+            "label": "Category",
+            "format": "text"
+          },
+          "organizer_id": {
+            "label": "Organizer ID",
+            "format": "text"
+          },
+          "image_url": {
+            "label": "Image",
+            "format": "image"
+          },
+          "url": {
+            "label": "Event URL",
+            "format": "link"
+          },
+          "tickets_url": {
+            "label": "Tickets URL",
+            "format": "link"
+          }
+        }
+      }
+    }
+  }
+}

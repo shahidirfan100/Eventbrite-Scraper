@@ -1,0 +1,17 @@
+{
+    "actorOutputSchemaVersion": 1,
+    "title": "Eventbrite Events Output",
+    "description": "Scraped event data from Eventbrite including event details, dates, prices, and URLs.",
+    "properties": {
+        "overview": {
+            "type": "string",
+            "title": "Overview",
+            "template": "{{links.apiDefaultDatasetUrl}}/items?view=overview"
+        },
+        "details": {
+            "type": "string",
+            "title": "Full Details",
+            "template": "{{links.apiDefaultDatasetUrl}}/items?view=details"
+        }
+    }
+}
