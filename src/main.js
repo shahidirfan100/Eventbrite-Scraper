@@ -28,14 +28,14 @@ async function main() {
         const buildStartUrl = (query, loc, cat, dateF, free) => {
             // Base URL pattern: https://www.eventbrite.com/d/{location}/{category--}events{--date}/?page=1
             let path = loc || 'online';
-            
+
             // Build query path
             let queryPath = '';
             if (cat) queryPath += `${cat}--`;
             if (free) queryPath += 'free--';
             queryPath += query || 'all-events';
             if (dateF) queryPath += `--${dateF}`;
-            
+
             return `https://www.eventbrite.com/d/${path}/${queryPath}/`;
         };
 
@@ -54,6 +54,70 @@ async function main() {
 
         let saved = 0;
         const seenIds = new Set();
+
+        // Clean Eventbrite image URLs - extract original CDN URL
+        function cleanImageUrl(url) {
+            if (!url) return null;
+
+            // Check if it's a proxied URL like: https://img.evbuc.com/https%3A%2F%2Fcdn.evbuc.com%2F...
+            if (url.includes('img.evbuc.com/https')) {
+                try {
+                    // Extract the encoded URL part after img.evbuc.com/
+                    const match = url.match(/img\.evbuc\.com\/(https?%3A%2F%2F[^?]+)/);
+                    if (match && match[1]) {
+                        // Decode the URL
+                        let decoded = decodeURIComponent(match[1]);
+                        return decoded;
+                    }
+                } catch (e) {
+                    // If decoding fails, return original
+                }
+            }
+
+            // Remove query parameters for cleaner URL if it's already a CDN URL
+            if (url.includes('cdn.evbuc.com')) {
+                try {
+                    const urlObj = new URL(url);
+                    return urlObj.origin + urlObj.pathname;
+                } catch (e) {
+                    // Return original if parsing fails
+                }
+            }
+
+            return url;
+        }
+
+        // Format price from various data structures
+        function formatPrice(event) {
+            // Check if free
+            if (event.is_free || event.isFree) {
+                return 'Free';
+            }
+
+            // Check for minPrice object structure (from React state)
+            if (event.minPrice) {
+                const minVal = event.minPrice.minPriceValue;
+                const currency = event.minPrice.currency || 'USD';
+                if (minVal !== undefined && minVal !== null) {
+                    // minPriceValue is often in cents (e.g., 2300 = $23.00)
+                    const amount = minVal >= 100 ? (minVal / 100).toFixed(2) : minVal.toFixed(2);
+                    const symbol = currency === 'USD' ? '$' : currency === 'GBP' ? '£' : currency === 'EUR' ? '€' : currency + ' ';
+                    return `From ${symbol}${amount}`;
+                }
+            }
+
+            // Check for ticket_availability structure
+            if (event.ticket_availability?.minimum_ticket_price?.display) {
+                return event.ticket_availability.minimum_ticket_price.display;
+            }
+
+            // Check for direct price field
+            if (event.price) {
+                return event.price;
+            }
+
+            return null;
+        }
 
         // Extract __SERVER_DATA__ from script tags (Priority 1)
         function extractServerData($) {
@@ -87,11 +151,11 @@ async function main() {
         function extractJsonLd($) {
             const events = [];
             const scripts = $('script[type="application/ld+json"]');
-            
+
             scripts.each((_, script) => {
                 try {
                     const data = JSON.parse($(script).html() || '');
-                    
+
                     // Handle ItemList containing Events
                     if (data['@type'] === 'ItemList' && data.itemListElement) {
                         data.itemListElement.forEach(item => {
@@ -112,7 +176,7 @@ async function main() {
                             }
                         });
                     }
-                    
+
                     // Handle single Event
                     if (data['@type'] === 'Event') {
                         events.push({
@@ -132,14 +196,14 @@ async function main() {
                     log.debug(`Failed to parse JSON-LD: ${e.message}`);
                 }
             });
-            
+
             return events.length > 0 ? events : null;
         }
 
         // Extract from HTML (Priority 3 - Fallback)
         function extractFromHtml($) {
             const events = [];
-            
+
             // Try multiple selectors for event cards
             const cardSelectors = [
                 '[data-testid="search-event"]',
@@ -147,30 +211,31 @@ async function main() {
                 '.event-card-link',
                 '[data-event-id]'
             ];
-            
+
             let cards = $();
             for (const selector of cardSelectors) {
                 cards = $(selector);
                 if (cards.length > 0) break;
             }
-            
+
             cards.each((_, card) => {
                 const $card = $(card);
-                
+
                 // Find the link
                 const linkEl = $card.is('a') ? $card : $card.find('a.event-card-link, a[href*="/e/"]').first();
                 const url = linkEl.attr('href') || null;
-                
+
                 // Extract title
                 const title = $card.find('h3, h2, [data-testid="event-title"]').first().text().trim() || null;
-                
+
                 // Extract image
                 const img = $card.find('img').first();
-                const image_url = img.attr('src') || img.attr('data-src') || null;
-                
+                const rawImgUrl = img.attr('src') || img.attr('data-src') || null;
+                const image_url = cleanImageUrl(rawImgUrl);
+
                 // Extract date/time text
                 const dateText = $card.find('p, time, [data-testid="event-date"]').first().text().trim() || null;
-                
+
                 // Extract price
                 let price = null;
                 let is_free = false;
@@ -179,17 +244,18 @@ async function main() {
                     is_free = true;
                     price = 'Free';
                 } else {
-                    const priceMatch = priceText.match(/(?:from\s*)?\$[\d,.]+/i);
+                    // Match various currency formats: $, £, €
+                    const priceMatch = priceText.match(/(?:from\s*)?[$£€][\d,.]+/i);
                     if (priceMatch) price = priceMatch[0];
                 }
-                
+
                 // Extract event ID from URL
                 let id = null;
                 if (url) {
                     const idMatch = url.match(/\/e\/[^/]+-(\d+)/);
                     if (idMatch) id = idMatch[1];
                 }
-                
+
                 if (title || url) {
                     events.push({
                         id,
@@ -202,7 +268,7 @@ async function main() {
                     });
                 }
             });
-            
+
             return events.length > 0 ? events : null;
         }
 
@@ -210,23 +276,27 @@ async function main() {
         function transformServerEvent(event) {
             const tags = event.tags || [];
             const categoryTag = tags.find(t => t.prefix === 'EventbriteCategory' || t.display_name);
-            
+
+            // Get image URL and clean it
+            const rawImageUrl = event.image?.url || event.primary_image?.url || event.imageUrl || null;
+
             return {
                 id: event.id || null,
                 name: event.name || null,
                 summary: event.summary || null,
                 url: event.url || null,
-                image_url: event.image?.url || event.primary_image?.url || null,
-                start_date: event.start_date || null,
-                start_time: event.start_time || null,
-                end_date: event.end_date || null,
-                end_time: event.end_time || null,
+                image_url: cleanImageUrl(rawImageUrl),
+                start_date: event.start_date || event.startDate || null,
+                start_time: event.start_time || event.startTime || null,
+                end_date: event.end_date || event.endDate || null,
+                end_time: event.end_time || event.endTime || null,
                 timezone: event.timezone || null,
-                is_online_event: event.is_online_event || false,
-                is_free: event.is_free || false,
-                price: event.ticket_availability?.minimum_ticket_price?.display || (event.is_free ? 'Free' : null),
+                is_online_event: event.is_online_event || event.isOnlineEvent || false,
+                is_free: event.is_free || event.isFree || false,
+                price: formatPrice(event),
                 category: categoryTag?.display_name || null,
-                organizer_id: event.primary_organizer_id || null,
+                organizer_id: event.primary_organizer_id || event.organizerId || null,
+                organizer_name: event.organizerName || null,
                 tickets_url: event.tickets_url || null,
             };
         }
@@ -234,7 +304,7 @@ async function main() {
         // Find next page URL
         function findNextPage($, currentUrl, currentPage, maxPage) {
             if (currentPage >= maxPage) return null;
-            
+
             // Parse current URL and add/update page parameter
             try {
                 const url = new URL(currentUrl);
@@ -253,17 +323,17 @@ async function main() {
             maxConcurrency: 5,
             requestHandlerTimeoutSecs: 60,
             additionalMimeTypes: ['application/json'],
-            
+
             async requestHandler({ request, $, log: crawlerLog }) {
                 const pageNo = request.userData?.pageNo || 1;
-                
+
                 if (saved >= RESULTS_WANTED) {
                     crawlerLog.info(`Reached target of ${RESULTS_WANTED} events. Stopping.`);
                     return;
                 }
 
                 crawlerLog.info(`Processing page ${pageNo}: ${request.url}`);
-                
+
                 let events = [];
                 let totalPages = MAX_PAGES;
                 let source = 'unknown';
@@ -306,11 +376,11 @@ async function main() {
                 const toSave = [];
                 for (const event of events) {
                     if (saved >= RESULTS_WANTED) break;
-                    
+
                     const eventId = event.id || event.url || event.name;
                     if (eventId && seenIds.has(eventId)) continue;
                     if (eventId) seenIds.add(eventId);
-                    
+
                     toSave.push({
                         ...event,
                         _source: 'eventbrite',
@@ -343,11 +413,11 @@ async function main() {
 
         log.info(`Starting Eventbrite scraper with ${initial.length} start URL(s)`);
         log.info(`Target: ${RESULTS_WANTED} events, max ${MAX_PAGES} pages`);
-        
+
         await crawler.run(initial.map(u => ({ url: u, userData: { pageNo: 1 } })));
-        
+
         log.info(`Finished. Saved ${saved} events`);
-        
+
     } finally {
         await Actor.exit();
     }

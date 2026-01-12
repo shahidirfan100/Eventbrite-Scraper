@@ -126,6 +126,10 @@
             "label": "Organizer ID",
             "format": "text"
           },
+          "organizer_name": {
+            "label": "Organizer",
+            "format": "text"
+          },
           "image_url": {
             "label": "Image",
             "format": "image"
