@@ -14,15 +14,15 @@ async function main() {
             category = '',
             date_filter = '',
             is_free = false,
-            results_wanted: RESULTS_WANTED_RAW = 100,
-            max_pages: MAX_PAGES_RAW = 50,
+            results_wanted: RESULTS_WANTED_RAW = 20,
+            max_pages: MAX_PAGES_RAW = 5,
             startUrl,
             startUrls,
             proxyConfiguration,
         } = input;
 
-        const RESULTS_WANTED = Number.isFinite(+RESULTS_WANTED_RAW) ? Math.max(1, +RESULTS_WANTED_RAW) : 100;
-        const MAX_PAGES = Number.isFinite(+MAX_PAGES_RAW) ? Math.max(1, +MAX_PAGES_RAW) : 50;
+        const RESULTS_WANTED = Number.isFinite(+RESULTS_WANTED_RAW) ? Math.max(1, +RESULTS_WANTED_RAW) : 20;
+        const MAX_PAGES = Number.isFinite(+MAX_PAGES_RAW) ? Math.max(1, +MAX_PAGES_RAW) : 5;
 
         // Build Eventbrite search URL
         const buildStartUrl = (query, loc, cat, dateF, free) => {
@@ -133,10 +133,42 @@ async function main() {
                         // Handle trailing semicolons and clean up
                         jsonStr = jsonStr.replace(/;$/, '').trim();
                         const data = JSON.parse(jsonStr);
-                        if (data?.search_data?.events?.results) {
+
+                        if (data?.search_data?.events) {
+                            const eventsData = data.search_data.events;
+
+                            // Merge results and promoted_results for more complete data
+                            // promoted_results often has more fields like primary_organizer and ticket_availability
+                            const allEvents = [];
+                            const seenEventIds = new Set();
+
+                            // Add promoted_results first (they have more complete data)
+                            if (eventsData.promoted_results?.length) {
+                                for (const event of eventsData.promoted_results) {
+                                    if (event.id && !seenEventIds.has(event.id)) {
+                                        seenEventIds.add(event.id);
+                                        allEvents.push(event);
+                                    }
+                                }
+                            }
+
+                            // Then add regular results
+                            if (eventsData.results?.length) {
+                                for (const event of eventsData.results) {
+                                    if (event.id && !seenEventIds.has(event.id)) {
+                                        seenEventIds.add(event.id);
+                                        allEvents.push(event);
+                                    }
+                                }
+                            }
+
+                            // Get profiles map for organizer name lookup
+                            const profiles = data.search_data.profiles || {};
+
                             return {
-                                events: data.search_data.events.results,
-                                pagination: data.search_data.events.pagination || {}
+                                events: allEvents,
+                                profiles: profiles,
+                                pagination: eventsData.pagination || {}
                             };
                         }
                     } catch (e) {
@@ -273,12 +305,59 @@ async function main() {
         }
 
         // Transform __SERVER_DATA__ event to output format
-        function transformServerEvent(event) {
+        function transformServerEvent(event, profiles = {}) {
             const tags = event.tags || [];
             const categoryTag = tags.find(t => t.prefix === 'EventbriteCategory' || t.display_name);
 
             // Get image URL and clean it
             const rawImageUrl = event.image?.url || event.primary_image?.url || event.imageUrl || null;
+
+            // Extract organizer name from multiple possible sources
+            let organizerName = null;
+            // First try primary_organizer object (available in promoted_results)
+            if (event.primary_organizer?.name) {
+                organizerName = event.primary_organizer.name;
+            }
+            // Then try direct organizerName field
+            else if (event.organizerName) {
+                organizerName = event.organizerName;
+            }
+            // Finally try profiles lookup using primary_organizer_id
+            else if (event.primary_organizer_id && profiles[event.primary_organizer_id]) {
+                const profile = profiles[event.primary_organizer_id];
+                organizerName = profile.name || profile.display_name || null;
+            }
+
+            // Extract price from ticket_availability or other sources
+            let price = null;
+            let isFree = event.is_free || event.isFree || false;
+
+            // Check ticket_availability (most reliable)
+            if (event.ticket_availability) {
+                const ta = event.ticket_availability;
+                if (ta.is_free) {
+                    isFree = true;
+                    price = 'Free';
+                } else if (ta.minimum_ticket_price?.display) {
+                    price = ta.minimum_ticket_price.display;
+                } else if (ta.minimum_ticket_price?.value !== undefined) {
+                    // Value is in cents, convert to display format
+                    const val = ta.minimum_ticket_price.value;
+                    const currency = ta.minimum_ticket_price.currency || 'USD';
+                    const symbol = currency === 'USD' ? '$' : currency === 'GBP' ? '£' : currency === 'EUR' ? '€' : currency + ' ';
+                    const amount = (val / 100).toFixed(2);
+                    price = `From ${symbol}${amount}`;
+                }
+            }
+
+            // Fallback to formatPrice for other structures
+            if (!price && !isFree) {
+                price = formatPrice(event);
+            }
+
+            if (isFree && !price) {
+                price = 'Free';
+            }
 
             return {
                 id: event.id || null,
@@ -292,11 +371,11 @@ async function main() {
                 end_time: event.end_time || event.endTime || null,
                 timezone: event.timezone || null,
                 is_online_event: event.is_online_event || event.isOnlineEvent || false,
-                is_free: event.is_free || event.isFree || false,
-                price: formatPrice(event),
+                is_free: isFree,
+                price: price,
                 category: categoryTag?.display_name || null,
-                organizer_id: event.primary_organizer_id || event.organizerId || null,
-                organizer_name: event.organizerName || null,
+                organizer_id: event.primary_organizer_id || event.primary_organizer?.id || null,
+                organizer_name: organizerName,
                 tickets_url: event.tickets_url || null,
             };
         }
@@ -341,7 +420,8 @@ async function main() {
                 // Priority 1: Try __SERVER_DATA__
                 const serverData = extractServerData($);
                 if (serverData?.events?.length) {
-                    events = serverData.events.map(transformServerEvent);
+                    const profiles = serverData.profiles || {};
+                    events = serverData.events.map(e => transformServerEvent(e, profiles));
                     totalPages = Math.min(serverData.pagination?.page_count || MAX_PAGES, MAX_PAGES);
                     source = '__SERVER_DATA__';
                     crawlerLog.info(`Extracted ${events.length} events from __SERVER_DATA__ (page ${pageNo}/${totalPages})`);
