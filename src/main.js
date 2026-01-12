@@ -417,7 +417,7 @@ async function main() {
                 let totalPages = MAX_PAGES;
                 let source = 'unknown';
 
-                // Priority 1: Try __SERVER_DATA__
+                // Priority 1: Try __SERVER_DATA__ (has most complete data)
                 const serverData = extractServerData($);
                 if (serverData?.events?.length) {
                     const profiles = serverData.profiles || {};
@@ -425,13 +425,46 @@ async function main() {
                     totalPages = Math.min(serverData.pagination?.page_count || MAX_PAGES, MAX_PAGES);
                     source = '__SERVER_DATA__';
                     crawlerLog.info(`Extracted ${events.length} events from __SERVER_DATA__ (page ${pageNo}/${totalPages})`);
+
+                    // Try to supplement missing fields with JSON-LD data
+                    const jsonLdEvents = extractJsonLd($);
+                    if (jsonLdEvents?.length) {
+                        // Create lookup by URL or name
+                        const jsonLdLookup = {};
+                        for (const jEvent of jsonLdEvents) {
+                            if (jEvent.url) jsonLdLookup[jEvent.url] = jEvent;
+                            if (jEvent.name) jsonLdLookup[jEvent.name] = jEvent;
+                        }
+
+                        // Supplement missing fields
+                        events = events.map(event => {
+                            const jData = jsonLdLookup[event.url] || jsonLdLookup[event.name] || {};
+                            return {
+                                ...event,
+                                // Fill in any null fields from JSON-LD
+                                summary: event.summary || jData.summary || null,
+                                start_date: event.start_date || jData.start_date || null,
+                                start_time: event.start_time || jData.start_time || null,
+                                end_date: event.end_date || jData.end_date || null,
+                                end_time: event.end_time || jData.end_time || null,
+                                image_url: event.image_url || cleanImageUrl(jData.image_url) || null,
+                                is_online_event: event.is_online_event || jData.is_online_event || false,
+                                location: event.location || jData.location || null,
+                            };
+                        });
+                        crawlerLog.debug(`Supplemented with JSON-LD data`);
+                    }
                 }
 
-                // Priority 2: Try JSON-LD
+                // Priority 2: Try JSON-LD only if __SERVER_DATA__ had no events
                 if (!events.length) {
                     const jsonLdEvents = extractJsonLd($);
                     if (jsonLdEvents?.length) {
-                        events = jsonLdEvents;
+                        // Clean image URLs for JSON-LD events
+                        events = jsonLdEvents.map(e => ({
+                            ...e,
+                            image_url: cleanImageUrl(e.image_url),
+                        }));
                         source = 'JSON-LD';
                         crawlerLog.info(`Extracted ${events.length} events from JSON-LD`);
                     }
